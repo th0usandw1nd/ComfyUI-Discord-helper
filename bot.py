@@ -75,7 +75,6 @@ class GenerationQueue:
         self.current_task = None
     
     def add_request(self, interaction, positive, negative, batch_count, size):
-        """將請求加入佇列"""
         request = {
             'interaction': interaction,
             'positive': positive,
@@ -89,14 +88,12 @@ class GenerationQueue:
         return len(self.queue)  # 返回佇列位置
     
     def get_queue_position(self, user_id):
-        """取得特定用戶在佇列中的位置"""
         for idx, req in enumerate(self.queue):
             if req['user_id'] == user_id:
                 return idx + 1
         return 0
     
     def get_queue_info(self):
-        """取得佇列資訊"""
         if self.processing and self.current_task:
             current_user = self.current_task.get('user_name', 'Unknown')
             batch_info = self.current_task.get('batch_count', 1)
