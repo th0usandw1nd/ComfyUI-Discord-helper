@@ -7,27 +7,16 @@ import json
 import asyncio
 from dotenv import load_dotenv
 from api import get_image
-from scp_uploader import *
 from collections import deque
-import paramiko
-import posixpath
 from datetime import datetime
 
 # --- 設定 ---
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 COMFYUI_SERVER_ADDRESS = os.getenv("COMFYUI_SERVER_ADDRESS")
-
-# --- 可選: SCP 設定 --- 
-SCP_ENABLED = os.getenv("SCP_ENABLED", "false").lower() == "true"
-#SCP_HOST = os.getenv("SCP_HOST")
-#SCP_PORT = int(os.getenv("SCP_PORT"))
-#SCP_USERNAME = os.getenv("SCP_USERNAME")
-#SCP_PASSWORD = os.getenv("SCP_PASSWORD")
-#SCP_REMOTE_PATH = os.getenv("SCP_REMOTE_PATH")
+PROMPTS_FILE = "user_prompts.json"
 
 # --- 提示詞檔案處理---
-PROMPTS_FILE = "user_prompts.json"
 def load_prompts(file_path):
     if not os.path.exists(file_path):
         return {}
@@ -61,9 +50,17 @@ IMAGE_SIZES = {
     'horizontal': (1216, 832)
 }
 
-DEFAULT_POSITIVE_PROMPT = """Hatsune Miku,limited palette,black background,colorful,vibrant,glowing outline,neon,blacklight,looking at viewer, masterpiece, very aesthetic"""
+DEFAULT_POSITIVE_PROMPT = """masterpiece, best quality, amazing quality, 
+beach, sky,
+1girl, solo,
+agnes tachyon, umamusume, animal ears, animal tail,
+medium length hair, lab coat, yellow sweater, black pantyhose, boots,
+standing, teasing smile, v,
+full body, horizontal composition,"""
 
-DEFAULT_NEGATIVE_PROMPT = """worst quality,bad quality,bad hands,very displeasing,extra digit,fewer digits,jpeg artifacts,signature,username,reference,mutated,lineup,manga,comic,disembodied,turnaround,2koma,4koma,monster,text,bad foreshortening,,logo,bad anatomy,bad perspective,bad proportions,artistic error,anatomical nonsense,amateur,out of frame,multiple views,"""
+DEFAULT_NEGATIVE_PROMPT = """bad quality,worst quality,worst detail,sketch,censor,simple background,transparent background,
+text,english text, doujin cover,bar censor,censored, mosaic censoring,
+dutch angle, from above, from below,"""
 
 MAX_BATCH_SIZE = 4  # 最大批次生成數量
 
@@ -75,6 +72,7 @@ class GenerationQueue:
         self.current_task = None
     
     def add_request(self, interaction, positive, negative, batch_count, size):
+        """將請求加入佇列"""
         request = {
             'interaction': interaction,
             'positive': positive,
@@ -88,12 +86,14 @@ class GenerationQueue:
         return len(self.queue)  # 返回佇列位置
     
     def get_queue_position(self, user_id):
+        """取得特定用戶在佇列中的位置"""
         for idx, req in enumerate(self.queue):
             if req['user_id'] == user_id:
                 return idx + 1
         return 0
     
     def get_queue_info(self):
+        """取得佇列資訊"""
         if self.processing and self.current_task:
             current_user = self.current_task.get('user_name', 'Unknown')
             batch_info = self.current_task.get('batch_count', 1)
@@ -121,13 +121,6 @@ async def on_ready():
         print(f"[DEBUG] 已同步 {len(synced)} 個指令")
     except Exception as e:
         print(f"[DEBUG] 同步指令失敗: {e}")
-    
-    if SCP_ENABLED:
-        print(f"[SCP] 功能已啟用")
-        #print(f"[SCP] 目標: {SCP_USERNAME}@{SCP_HOST}:{SCP_PORT}")
-        #print(f"[SCP] 遠端路徑: {SCP_REMOTE_PATH}")
-    else:
-        print(f"[SCP] 功能未啟用")
     
     bot.loop.create_task(process_queue())
 
@@ -167,12 +160,12 @@ async def execute_generation(request):
     batch_count = request['batch_count']
     size = request['size']
     
+    
     # 判斷是否使用預設值
     user_settings = user_prompts.get(request['user_id'], {})
     is_default_pos = "(預設)" if 'positive' not in user_settings else ""
     is_default_neg = "(預設)" if 'negative' not in user_settings else ""
     
-    # 構建提示詞顯示文字
     batch_info = f" (共 {batch_count} 張)" if batch_count > 1 else ""
     size_display = f"**尺寸**: {size}\n"
     prompt_display = (
@@ -181,16 +174,15 @@ async def execute_generation(request):
         f"**負向 {is_default_neg}**:\n```{negative}```"
     )
     
-    # 初始訊息
     initial_text = f"⏳ 開始生成圖片{batch_info}...\n\n{prompt_display}"
     message = await interaction.followup.send(initial_text)
+    progress_state = {'current': 0, 'total': batch_count}
     
-    # 創建停止事件
     stop_event = asyncio.Event()
     
     # 啟動背景動畫任務
     animation_task = asyncio.create_task(
-        update_status_message(message, prompt_display, stop_event, batch_count)
+        update_status_message(message, prompt_display, stop_event, progress_state)
     )
     
     generated_images = []
@@ -211,16 +203,7 @@ async def execute_generation(request):
             
             if image_bytes:
                 generated_images.append(image_bytes)
-                
-                # 如果啟用 SCP，立即上傳圖片
-                if SCP_ENABLED:
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    filename = f"gen_{interaction.user.id}_{timestamp}_{i+1}.png"
-                    #success, result = await upload_image(image_bytes, filename, SCP_HOST, SCP_PORT, SCP_USERNAME, SCP_PASSWORD, SCP_REMOTE_PATH)
-                    #if success:
-                        #print(f"[SCP] 圖片已上傳: {result}")
-                    #else:
-                        #print(f"[SCP] 上傳失敗: {result}")
+                progress_state['current'] = i + 1
             else:
                 stop_event.set()
                 await animation_task
@@ -257,21 +240,29 @@ async def execute_generation(request):
         raise
 
 
-async def update_status_message(message, prompt_text, stop_event, batch_count=1):
+async def update_status_message(message, prompt_text, stop_event, progress_state):
     """
     背景任務：定期更新訊息以顯示動畫效果（保留提示詞資訊）
     """
     animations = ["⏳", "⌛", "⏳", "⌛"]
-    dots = ["", ".", "..", "..."]
+    dots = [".", "..", "...", "...."]
     counter = 0
-    
-    batch_info = f" (共 {batch_count} 張)" if batch_count > 1 else ""
     
     try:
         while not stop_event.is_set():
             animation = animations[counter % len(animations)]
             dot = dots[counter % len(dots)]
-            status_text = f"{animation} 正在生成圖片{batch_info}，請稍候{dot}\n\n{prompt_text}"
+
+            current_progress = progress_state.get('current', 0)
+            total_count = progress_state.get('total', 1)
+
+            progress_info = ""
+            if total_count > 1 and current_progress > 0:
+                progress_info = f" (進度: {current_progress}/{total_count})"
+            elif total_count > 1:
+                progress_info = f" (共 {total_count} 張)"
+
+            status_text = f"{animation} 正在生成圖片{progress_info}，請稍候{dot}\n\n{prompt_text}"
             await message.edit(content=status_text)
             counter += 1
             await asyncio.sleep(1.5)

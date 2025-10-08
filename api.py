@@ -21,9 +21,6 @@ IMAGE_SIZES = {
 
 # --- Progress Bar ---
 def print_progress_bar(iteration, total, prefix='', suffix='', length=50, fill='█'):
-    """
-    顯示單行進度條（覆蓋上一行）
-    """
     percent = f"{100 * (iteration / float(total)):.1f}"
     filled_length = int(length * iteration // total)
     bar = fill * filled_length + '-' * (length - filled_length)
