@@ -14,23 +14,23 @@
 
 詳細資訊請參閱[Discord Developer Portal: Intro | Documentation](https://discord.com/developers/docs/intro)，此處只簡單列舉設置bot的步驟。
 
-###### 1. 建立 Discord 應用程式
+### 1. 建立 Discord 應用程式
 * 前往 Discord Developer Portal，點擊 "New Application"
 * 輸入應用程式名稱，點擊 "Create"
 
-###### 2. 建立 Bot 使用者
+### 2. 建立 Bot 使用者
 * 在左側選單中，點擊 "Bot"，選擇 "Add Bot" 
     * 建議將public bot設為關閉
 
-###### 3. 設定 Bot 權限:
+### 3. 設定 Bot 權限:
 * 在"Privileged Gateway Intents"，找到並勾選:
     * MESSAGE CONTENT INTENT
 
-###### 4. 取得 Bot Token:
+###4. 取得 Bot Token:
 * 在 Bot 設定頁面中，找到 "TOKEN" 區塊，點擊 "Reset Token" 按鈕
     * **! 不要隨意洩漏自己的TOKEN !!**
 
-###### 5. 邀請 Bot 到伺服器:
+### 5. 邀請 Bot 到伺服器:
 * 前往 OAuth2 設定頁面，點擊 "URL Generator"
 
 * 在 "SCOPES" 區塊中，勾選以下選項：
@@ -46,21 +46,21 @@
 
 ## 安裝步驟
 
-###### 1. 克隆此專案
+### 1. 克隆此專案
 ```bash
 git clone <your-repo-url>
 cd <your-repo-name>
 ```
 
-###### 2. 安裝依賴:
+### 2. 安裝依賴:
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-###### 3. 設定環境變數:
+### 3. 設定環境變數:
 * 請參考[.env.example](.env.example)
 
-###### 4. 準備 ComfyUI workflow:
+### 4. 準備 ComfyUI workflow:
 * 預設checkpoint使用[Illustrious-XL v0.1](https://civitai.com/models/795765?modelVersionId=889818)，請根據你的需求自行修改
 * 將你的 workflow 儲存為 default_workflow.json
 * 確保 workflow 中包含以下節點：
@@ -70,7 +70,7 @@ python -m pip install -r requirements.txt
 
 ![pic](.meta/default_workflow_screenshot.png)
 
-###### 5. 執行 Bot:
+### 5. 執行 Bot:
 ```bash
 python bot.py
 ```
