@@ -6,9 +6,9 @@
 
 ## 展示
 
-![pic](.meta/prompt.png)
+![pic](.meta/prompt_example.png)
 
-![pic](.meta/gen.png)
+![pic](.meta/gen_example.png)
 
 ## Bot Setup
 
