@@ -1,0 +1,22 @@
+# --- Environment Variables ---
+.env
+
+# --- Python Cache ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- Virtual Environment ---
+venv/
+.venv/
+env/
+.env/
+
+# --- User Data ---
+user_prompts.json
+
+# --- IDE/Editor specific ---
+.vscode/
+.idea/
+*.swp
