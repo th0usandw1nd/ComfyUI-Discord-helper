@@ -6,7 +6,7 @@ import os
 import json
 import asyncio
 from dotenv import load_dotenv
-from api import get_image
+from api import get_image_txt2img, get_image_img2img
 from collections import deque
 from datetime import datetime
 
@@ -50,17 +50,9 @@ IMAGE_SIZES = {
     'horizontal': (1216, 832)
 }
 
-DEFAULT_POSITIVE_PROMPT = """masterpiece, best quality, amazing quality, 
-beach, sky,
-1girl, solo,
-agnes tachyon, umamusume, animal ears, animal tail,
-medium length hair, lab coat, yellow sweater, black pantyhose, boots,
-standing, teasing smile, v,
-full body, horizontal composition,"""
+DEFAULT_POSITIVE_PROMPT = """Hatsune Miku,limited palette,black background,colorful,vibrant,glowing outline,neon,blacklight,looking at viewer, masterpiece, very aesthetic,"""
 
-DEFAULT_NEGATIVE_PROMPT = """bad quality,worst quality,worst detail,sketch,censor,simple background,transparent background,
-text,english text, doujin cover,bar censor,censored, mosaic censoring,
-dutch angle, from above, from below,"""
+DEFAULT_NEGATIVE_PROMPT = """worst quality,bad quality,bad hands,very displeasing,extra digit,fewer digits,jpeg artifacts,signature,username,reference,mutated,lineup,manga,comic,disembodied,futanari,yaoi,dickgirl,turnaround,2koma,4koma,monster,cropped,amputee,text,bad foreshortening,what,guro,logo,bad anatomy,bad perspective,bad proportions,artistic error,anatomical nonsense,amateur,out of frame,multiple views,"""
 
 MAX_BATCH_SIZE = 4  # 最大批次生成數量
 
@@ -71,14 +63,16 @@ class GenerationQueue:
         self.processing = False
         self.current_task = None
     
-    def add_request(self, interaction, positive, negative, batch_count, size):
-        """將請求加入佇列"""
+    def add_request(self, interaction, positive, negative, batch_count, size, mode='txt2img', input_image=None, denoise=0.75):
         request = {
             'interaction': interaction,
             'positive': positive,
             'negative': negative,
             'batch_count': batch_count,
             'size': size,
+            'mode': mode,
+            'input_image': input_image,
+            'denoise': denoise,
             'user_id': interaction.user.id,
             'user_name': interaction.user.display_name
         }
@@ -86,19 +80,18 @@ class GenerationQueue:
         return len(self.queue)  # 返回佇列位置
     
     def get_queue_position(self, user_id):
-        """取得特定用戶在佇列中的位置"""
         for idx, req in enumerate(self.queue):
             if req['user_id'] == user_id:
                 return idx + 1
         return 0
     
     def get_queue_info(self):
-        """取得佇列資訊"""
         if self.processing and self.current_task:
             current_user = self.current_task.get('user_name', 'Unknown')
             batch_info = self.current_task.get('batch_count', 1)
+            mode_info = '圖生圖' if self.current_task.get('mode') == 'img2img' else '文生圖'
             waiting = len(self.queue)
-            return f"正在處理: {current_user} (x{batch_info}) | 等待中: {waiting} 個請求"
+            return f"正在處理: {current_user} ({mode_info} x{batch_info}) | 等待中: {waiting} 個請求"
         elif len(self.queue) > 0:
             return f"等待中: {len(self.queue)} 個請求"
         else:
@@ -159,6 +152,9 @@ async def execute_generation(request):
     negative = request['negative']
     batch_count = request['batch_count']
     size = request['size']
+    mode = request.get('mode', 'txt2img')
+    input_image = request.get('input_image')
+    denoise = request.get('denoise', 0.75)
     
     
     # 判斷是否使用預設值
@@ -168,8 +164,12 @@ async def execute_generation(request):
     
     batch_info = f" (共 {batch_count} 張)" if batch_count > 1 else ""
     size_display = f"**尺寸**: {size}\n"
+    mode_display = f"**模式**: {'圖生圖' if mode == 'img2img' else '文生圖'}\n"
+    denoise_display = f"**去噪強度**: {denoise}\n" if mode == 'img2img' else ""
     prompt_display = (
+        f"{mode_display}"
         f"{size_display}"
+        f"{denoise_display}"
         f"**正向 {is_default_pos}**:\n```{positive}```\n"
         f"**負向 {is_default_neg}**:\n```{negative}```"
     )
@@ -193,12 +193,20 @@ async def execute_generation(request):
             if batch_count > 1:
                 print(f"[生成] 正在生成第 {i+1}/{batch_count} 張圖片...")
             
-            image_bytes, error_message = await get_image(positive, negative, COMFYUI_SERVER_ADDRESS, size)
+            # 根據模式選擇生成函式
+            if mode == 'img2img':
+                image_bytes, error_message = await get_image_img2img(
+                    positive, negative, input_image, COMFYUI_SERVER_ADDRESS, size, denoise
+                )
+            else:
+                image_bytes, error_message = await get_image_txt2img(
+                    positive, negative, COMFYUI_SERVER_ADDRESS, size
+                )
             
             if error_message:
                 stop_event.set()
                 await animation_task
-                await message.edit(content=f"{interaction.user.mention} ❌ 生成失敗（第 {i+1}/{batch_count} 張）：{error_message}\n\n{prompt_display}")
+                await message.edit(content=f"{interaction.user.mention} ❌ 生成失敗(第 {i+1}/{batch_count} 張):{error_message}\n\n{prompt_display}")
                 return
             
             if image_bytes:
@@ -207,7 +215,7 @@ async def execute_generation(request):
             else:
                 stop_event.set()
                 await animation_task
-                await message.edit(content=f"{interaction.user.mention} ❌ 生成失敗（第 {i+1}/{batch_count} 張），無法從 ComfyUI 獲取圖片數據。\n\n{prompt_display}")
+                await message.edit(content=f"{interaction.user.mention} ❌ 生成失敗(第 {i+1}/{batch_count} 張),無法從 ComfyUI 獲取圖片數據。\n\n{prompt_display}")
                 return
         
         # 停止動畫
@@ -219,16 +227,20 @@ async def execute_generation(request):
             user_mention = interaction.user.mention
             
             if len(generated_images) == 1:
-                picture = discord.File(io.BytesIO(generated_images[0]), filename='generated_image.png')
-                await message.edit(content=f"{user_mention} ✅ 圖片生成完畢！\n\n{prompt_display}", attachments=[picture])
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                mode_prefix = 'img2img' if mode == 'img2img' else 'txt2img'
+                picture = discord.File(io.BytesIO(generated_images[0]), filename=f"{mode_prefix}_{interaction.user.id}_{timestamp}_{1}.png")
+                await message.edit(content=f"{user_mention} ✅ 圖片生成完畢!\n\n{prompt_display}", attachments=[picture])
             else:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                mode_prefix = 'img2img' if mode == 'img2img' else 'txt2img'
                 files = [
-                    discord.File(io.BytesIO(img), filename=f'generated_image_{i+1}.png')
+                    discord.File(io.BytesIO(img), filename=f"{mode_prefix}_{interaction.user.id}_{timestamp}_{i+1}.png")
                     for i, img in enumerate(generated_images)
                 ]
-                await message.edit(content=f"{user_mention} ✅ 圖片生成完畢！(共 {len(generated_images)} 張)\n\n{prompt_display}", attachments=files)
+                await message.edit(content=f"{user_mention} ✅ 圖片生成完畢!(共 {len(generated_images)} 張)\n\n{prompt_display}", attachments=files)
         else:
-            await message.edit(content=f"{interaction.user.mention} ❌ 生成失敗，沒有獲取到任何圖片。\n\n{prompt_display}")
+            await message.edit(content=f"{interaction.user.mention} ❌ 生成失敗,沒有獲取到任何圖片。\n\n{prompt_display}")
     
     except Exception as e:
         stop_event.set()
@@ -236,8 +248,9 @@ async def execute_generation(request):
             await animation_task
         except:
             pass
-        await message.edit(content=f"{interaction.user.mention} ❌ 發生錯誤：{str(e)}\n\n{prompt_display}")
+        await message.edit(content=f"{interaction.user.mention} ❌ 發生錯誤:{str(e)}\n\n{prompt_display}")
         raise
+
 
 
 async def update_status_message(message, prompt_text, stop_event, progress_state):
@@ -303,6 +316,24 @@ async def positive_add(interaction: discord.Interaction, prompt: str):
     await save_prompts(PROMPTS_FILE, user_prompts)
     await interaction.response.send_message(f"**{interaction.user.display_name}**的正向提示詞已更新為：\n```{new_prompt}```", ephemeral=True)
 
+@bot.tree.command(name="positivedelete", description="刪除輸入的特定正向提示詞。")
+@app_commands.describe(prompt="你想刪除的提示詞，例如: solo, full body")
+async def positive_delete(interaction: discord.Interaction, prompt: str):
+    user_id = interaction.user.id
+    current_prompt = user_prompts.get(user_id, {}).get('positive')
+    if current_prompt:
+        base_prompt = current_prompt
+    else:
+        base_prompt = DEFAULT_POSITIVE_PROMPT
+    prompts_to_delete = [p.strip() for p in prompt.split(',') if p.strip()]
+    current_prompts_list = [p.strip() for p in base_prompt.split(',') if p.strip()]
+    new_prompts_list = [p for p in current_prompts_list if p not in prompts_to_delete]
+    new_prompt = ", ".join(new_prompts_list)
+    if user_id not in user_prompts:
+        user_prompts[user_id] = {}
+    user_prompts[user_id]['positive'] = new_prompt
+    await save_prompts(PROMPTS_FILE, user_prompts)
+    await interaction.response.send_message(f"**{interaction.user.display_name}** 的正向提示詞已更新為：\n```{new_prompt}```", ephemeral=True)
 
 @bot.tree.command(name="negative", description="設定你的負向提示詞")
 @app_commands.describe(prompt="你的負向提示詞，例如: worst quality, ugly")
@@ -335,6 +366,24 @@ async def negative_add(interaction: discord.Interaction, prompt: str):
     await save_prompts(PROMPTS_FILE, user_prompts)
     await interaction.response.send_message(f"**{interaction.user.display_name}**的負向提示詞已更新為：\n```{new_prompt}```", ephemeral=True)
 
+@bot.tree.command(name="negativedelete", description="刪除輸入的特定負向提示詞。")
+@app_commands.describe(prompt="你想刪除的提示詞，例如: text, watermark")
+async def negative_delete(interaction: discord.Interaction, prompt: str):
+    user_id = interaction.user.id
+    current_prompt = user_prompts.get(user_id, {}).get('negative')
+    if current_prompt:
+        base_prompt = current_prompt
+    else:
+        base_prompt = DEFAULT_POSITIVE_PROMPT
+    prompts_to_delete = [p.strip() for p in prompt.split(',') if p.strip()]
+    current_prompts_list = [p.strip() for p in base_prompt.split(',') if p.strip()]
+    new_prompts_list = [p for p in current_prompts_list if p not in prompts_to_delete]
+    new_prompt = ", ".join(new_prompts_list)
+    if user_id not in user_prompts:
+        user_prompts[user_id] = {}
+    user_prompts[user_id]['negative'] = new_prompt
+    await save_prompts(PROMPTS_FILE, user_prompts)
+    await interaction.response.send_message(f"**{interaction.user.display_name}** 的負向提示詞已更新為：\n```{new_prompt}```", ephemeral=True)
 
 @bot.tree.command(name="checkpositive", description="檢查你目前設定的正向提示詞")
 async def check_positive(interaction: discord.Interaction):
@@ -355,7 +404,7 @@ async def check_negative(interaction: discord.Interaction):
         await interaction.response.send_message(f"**{interaction.user.display_name}**尚未使用 `/negative` 設定，將使用**預設**負向提示詞：\n```{DEFAULT_NEGATIVE_PROMPT}```", ephemeral=True)
 
 
-@bot.tree.command(name="gen", description="開始生成圖片")
+@bot.tree.command(name="txt2img", description="文生圖")
 @app_commands.describe(
     count="要生成的圖片數量 (1-4)",
     size="選擇圖片的尺寸"
@@ -365,7 +414,7 @@ async def check_negative(interaction: discord.Interaction):
     discord.app_commands.Choice(name="方形 (square)", value="square"),
     discord.app_commands.Choice(name="橫式 (horizontal)", value="horizontal"),
 ])
-async def generate(interaction: discord.Interaction, count: app_commands.Range[int, 1, 4], size: str = 'vertical'):
+async def txt2img(interaction: discord.Interaction, count: app_commands.Range[int, 1, 4], size: str = 'vertical'):
     user_id = interaction.user.id
     
     await interaction.response.defer()
@@ -378,16 +427,80 @@ async def generate(interaction: discord.Interaction, count: app_commands.Range[i
     
     batch_info = f" (x{count} 張)" if count > 1 else ""
     size_info = f" [{size}]"
+
+    embed = discord.Embed(color=discord.Color.blue())
     
     if position == 1 and not generation_queue.processing:
-        await interaction.followup.send(f"**{interaction.user.display_name}** 的請求已收到{batch_info}{size_info}，立即開始處理！")
+        embed.description = f"**{interaction.user.display_name}** 的文生圖請求已收到{batch_info}{size_info},立即開始處理!"
+        await interaction.followup.send(embed=embed)
     else:
-        await interaction.followup.send(
-            f"**{interaction.user.display_name}** 的請求已加入佇列{batch_info}{size_info}\n"
-            f"你的位置：第 **{position}** 位\n"
+        embed.description = (
+            f"**{interaction.user.display_name}** 的文生圖請求已加入佇列{batch_info}{size_info}\n"
+            f"你的位置:第 **{position}** 位\n"
             f"ℹ️ {generation_queue.get_queue_info()}"
         )
+        await interaction.followup.send(embed=embed)
 
+@bot.tree.command(name="img2img", description="圖生圖")
+@app_commands.describe(
+    image="上傳要重繪的圖片",
+    denoise="去噪強度 (0.1-1.0,越高變化越大)",
+    count="要生成的圖片數量 (1-4)",
+    size="選擇圖片的尺寸"
+)
+@app_commands.choices(size=[
+    discord.app_commands.Choice(name="直式 (vertical)", value="vertical"),
+    discord.app_commands.Choice(name="方形 (square)", value="square"),
+    discord.app_commands.Choice(name="橫式 (horizontal)", value="horizontal"),
+])
+async def img2img_generate(
+    interaction: discord.Interaction, 
+    image: discord.Attachment,
+    denoise: app_commands.Range[float, 0.1, 1.0] = 0.75,
+    count: app_commands.Range[int, 1, 4] = 1,
+    size: str = 'vertical'
+):
+    user_id = interaction.user.id
+    
+    if not image.content_type or not image.content_type.startswith('image/'):
+        await interaction.response.send_message("❌ 請上傳圖片檔案!", ephemeral=True)
+        return
+    
+    await interaction.response.defer()
+    
+    try:
+        image_bytes = await image.read()
+    except Exception as e:
+        await interaction.followup.send(f"❌ 無法讀取圖片: {str(e)}")
+        return
+    
+    user_settings = user_prompts.get(user_id, {})
+    positive = user_settings.get('positive', DEFAULT_POSITIVE_PROMPT)
+    negative = user_settings.get('negative', DEFAULT_NEGATIVE_PROMPT)
+    
+    position = generation_queue.add_request(
+        interaction, positive, negative, count, size, 
+        mode='img2img', input_image=image_bytes, denoise=denoise
+    )
+    
+    batch_info = f" (x{count} 張)" if count > 1 else ""
+    size_info = f" [{size}]"
+    denoise_info = f" (去噪: {denoise})"
+    
+    # 建立 Embed 顯示原圖縮圖
+    embed = discord.Embed(color=discord.Color.blue())
+    embed.set_thumbnail(url=image.url)
+    
+    if position == 1 and not generation_queue.processing:
+        embed.description = f"**{interaction.user.display_name}** 的圖生圖請求已收到{batch_info}{size_info}{denoise_info},立即開始處理!"
+        await interaction.followup.send(embed=embed)
+    else:
+        embed.description = (
+            f"**{interaction.user.display_name}** 的圖生圖請求已加入佇列{batch_info}{size_info}{denoise_info}\n"
+            f"你的位置:第 **{position}** 位\n"
+            f"ℹ️ {generation_queue.get_queue_info()}"
+        )
+        await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="queue", description="查看目前的佇列狀態")
 async def check_queue(interaction: discord.Interaction):
@@ -399,7 +512,7 @@ async def check_queue(interaction: discord.Interaction):
     if position > 0:
         await interaction.response.send_message(
             f"**佇列狀態**\n"
-            f"你的位置：第 **{position}** 位\n"
+            f"你的位置:第 **{position}** 位\n"
             f"{info}",
             ephemeral=True
         )
@@ -436,13 +549,17 @@ async def comfy_help(interaction: discord.Interaction):
     help_embed.add_field(
         name="**圖片生成**",
         value=(
-            "`/gen [數量] [尺寸]`\n"
-            "生成圖片（預設 1 張 vertical）\n"
+            "`/txt2img [數量] [尺寸]`\n"
+            "文生圖 - 從文字生成圖片(預設 1 張 vertical)\n\n"
+            "`/img2img <圖片> [去噪] [數量] [尺寸]`\n"
+            "圖生圖 - 重繪上傳的圖片\n"
+            "  • 去噪強度: 0.1-1.0 (預設 0.75)\n"
+            "  • 越高變化越大,越低越接近原圖\n\n"
             "尺寸選項:\n"
             "  • `square` - 正方形 (1024x1024)\n"
             "  • `vertical` - 直式 (832x1216) [預設]\n"
             "  • `horizontal` - 橫式 (1216x832)\n"
-            "範例：`!gen` 或 `!gen 3 square`\n\n"
+            "範例:`/txt2img 2 square` 或 `/img2img [圖片] 0.6`\n\n"
         ),
         inline=False
     )
@@ -454,9 +571,21 @@ async def comfy_help(interaction: discord.Interaction):
             "`/positive <提示詞>`\n"
             "設定你的正向提示詞\n"
             "範例：`/positive masterpiece, 1girl, smile`\n\n"
+            "`/positiveadd <提示詞>`\n"
+            "加入提示詞到正向提示詞。\n"
+            "範例：`/positiveadd masterpiece, 1girl, smile`\n\n"
+            "`/positivedelete <提示詞>`\n"
+            "刪除正向提示詞中的提示詞。\n"
+            "範例：`/positivedelete masterpiece, 1girl, smile`\n\n"
             "`/negative <提示詞>`\n"
             "設定你的負向提示詞\n"
             "範例：`/negative bad quality, ugly`\n\n"
+            "`/negativeadd <提示詞>`\n"
+            "加入提示詞到負向提示詞。\n"
+            "範例：`/negativeadd bad quality, ugly`\n\n"
+            "`/negativedelete <提示詞>`\n"
+            "刪除負向提示詞中的提示詞。\n"
+            "範例：`/negativedelete bad quality, ugly`\n\n"
         ),
         inline=False
     )
@@ -498,7 +627,7 @@ async def comfy_help(interaction: discord.Interaction):
         inline=False
     )
     
-    help_embed.set_footer(text="💡 使用 !comfyhelp 隨時查看此說明")
+    help_embed.set_footer(text="💡 使用 /help 隨時查看此說明")
     
     await interaction.response.send_message(embed=help_embed)
 
