@@ -26,7 +26,7 @@
 * 在"Privileged Gateway Intents"，找到並勾選:
     * MESSAGE CONTENT INTENT
 
-###4. 取得 Bot Token:
+### 4. 取得 Bot Token:
 * 在 Bot 設定頁面中，找到 "TOKEN" 區塊，點擊 "Reset Token" 按鈕
     * **! 不要隨意洩漏自己的TOKEN !!**
 

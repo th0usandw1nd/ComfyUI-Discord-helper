@@ -218,11 +218,9 @@ async def execute_generation(request):
                 await message.edit(content=f"{interaction.user.mention} ❌ 生成失敗(第 {i+1}/{batch_count} 張),無法從 ComfyUI 獲取圖片數據。\n\n{prompt_display}")
                 return
         
-        # 停止動畫
         stop_event.set()
         await animation_task
         
-        # 發送所有生成的圖片
         if generated_images:
             user_mention = interaction.user.mention
             
