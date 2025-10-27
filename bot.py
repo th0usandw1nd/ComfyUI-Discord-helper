@@ -105,6 +105,58 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="unused_prefix_", intents=intents) # <--- 新的
 
+# --- 含有提示詞的視窗 ---
+class PromptEditModal(discord.ui.Modal, title="編輯您的提示詞"):
+    def __init__(self, current_positive, current_negative):
+        super().__init__()
+        
+        # 正向提示詞輸入框
+        self.positive_prompt = discord.ui.TextInput(
+            label="正向提示詞 (Positive Prompt)",
+            style=discord.TextStyle.paragraph, 
+            default=current_positive,
+            required=False,
+            max_length=2000
+        )
+        self.add_item(self.positive_prompt)
+        
+        # 負向提示詞輸入框
+        self.negative_prompt = discord.ui.TextInput(
+            label="負向提示詞 (Negative Prompt)",
+            style=discord.TextStyle.paragraph,
+            default=current_negative,
+            required=False,
+            max_length=2000 
+        )
+        self.add_item(self.negative_prompt)
+
+    # 送出
+    async def on_submit(self, interaction: discord.Interaction):
+        user_id = interaction.user.id
+        
+        # 取得使用者輸入的內容
+        new_positive = self.positive_prompt.value
+        new_negative = self.negative_prompt.value
+        
+        # 更新或建立使用者的設定
+        if user_id not in user_prompts:
+            user_prompts[user_id] = {}
+            
+        user_prompts[user_id]['positive'] = new_positive
+        user_prompts[user_id]['negative'] = new_negative
+
+        await save_prompts(PROMPTS_FILE, user_prompts)
+        
+        # 回覆
+        embed = discord.Embed(
+            title=f"{interaction.user.display_name} 的提示詞已更新",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="✅ 正向提示詞", value=f"```{user_prompts[user_id]['positive']}```", inline=False)
+        embed.add_field(name="✅ 負向提示詞", value=f"```{user_prompts[user_id]['negative']}```", inline=False)
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 @bot.event
 async def on_ready():
     print(f'[DEBUG] Bot 已登入為 {bot.user}')
@@ -282,125 +334,33 @@ async def update_status_message(message, prompt_text, stop_event, progress_state
     except Exception as e:
         print(f"更新狀態訊息時發生錯誤: {e}")
 
-
-@bot.tree.command(name="positive", description="設定你的正向提示詞")
-@app_commands.describe(prompt="你的正向提示詞，例如: masterpiece, 1girl")
-async def set_positive(interaction: discord.Interaction, prompt: str):
+@bot.tree.command(name="editprompts", description="編輯你的正向與負向提示詞")
+async def edit_prompts(interaction: discord.Interaction):
     user_id = interaction.user.id
-    if user_id not in user_prompts:
-        user_prompts[user_id] = {}
-    user_prompts[user_id]['positive'] = prompt
-    await save_prompts(PROMPTS_FILE, user_prompts)
-    await interaction.response.send_message(f"**{interaction.user.display_name}**的正向提示詞已設定為：\n```{prompt}```", ephemeral=True)
+    
+    user_settings = user_prompts.get(user_id, {})
+    current_positive = user_settings.get('positive', DEFAULT_POSITIVE_PROMPT)
+    current_negative = user_settings.get('negative', DEFAULT_NEGATIVE_PROMPT)
+    
+    modal = PromptEditModal(current_positive=current_positive, current_negative=current_negative)
+    await interaction.response.send_modal(modal)
 
-@bot.tree.command(name="positiveadd", description="加入提示詞到正向提示詞。若未設定，則會添加到預設值中。")
-@app_commands.describe(prompt="你想新增的提示詞，例如: solo, full body,")
-async def positive_add(interaction: discord.Interaction, prompt: str):
+@bot.tree.command(name="checkprompts", description="檢查你的正向與負向提示詞")
+async def check_prompts(interaction: discord.Interaction):
     user_id = interaction.user.id
-    current_prompt = user_prompts.get(user_id, {}).get('positive')
-    if current_prompt:
-        base_prompt = current_prompt
+    embed = discord.Embed(
+        title=f"{interaction.user.display_name} 目前自訂的提示詞是:",
+        color=discord.Color.green()
+    )
+    if user_id in user_prompts:
+        embed.add_field(name="ℹ️ 正向提示詞", value=f"```{user_prompts[user_id]['positive']}```", inline=False)
+        embed.add_field(name="ℹ️ 負向提示詞", value=f"```{user_prompts[user_id]['negative']}```", inline=False)
     else:
-        base_prompt = DEFAULT_POSITIVE_PROMPT
-    clean_base = base_prompt.strip()
-    clean_prompt = prompt.strip()
-    if clean_base and not clean_base.endswith(','):
-        new_prompt = f"{clean_base}, {clean_prompt}"
-    else:
-        new_prompt = f"{clean_base} {clean_prompt}"
-    if user_id not in user_prompts:
-        user_prompts[user_id] = {}
-    user_prompts[user_id]['positive'] = new_prompt
-    await save_prompts(PROMPTS_FILE, user_prompts)
-    await interaction.response.send_message(f"**{interaction.user.display_name}**的正向提示詞已更新為：\n```{new_prompt}```", ephemeral=True)
+        embed.add_field(name="ℹ️ 預設正向提示詞", value=f"```{user_prompts[user_id]['positive']}```", inline=False)
+        embed.add_field(name="ℹ️ 預設負向提示詞", value=f"```{user_prompts[user_id]['negative']}```", inline=False)
+        embed.add_field(name="提示:", value="使用`/editprompts`來編輯提示詞", inline=False)
 
-@bot.tree.command(name="positivedelete", description="刪除輸入的特定正向提示詞。")
-@app_commands.describe(prompt="你想刪除的提示詞，例如: solo, full body")
-async def positive_delete(interaction: discord.Interaction, prompt: str):
-    user_id = interaction.user.id
-    current_prompt = user_prompts.get(user_id, {}).get('positive')
-    if current_prompt:
-        base_prompt = current_prompt
-    else:
-        base_prompt = DEFAULT_POSITIVE_PROMPT
-    prompts_to_delete = [p.strip() for p in prompt.split(',') if p.strip()]
-    current_prompts_list = [p.strip() for p in base_prompt.split(',') if p.strip()]
-    new_prompts_list = [p for p in current_prompts_list if p not in prompts_to_delete]
-    new_prompt = ", ".join(new_prompts_list)
-    if user_id not in user_prompts:
-        user_prompts[user_id] = {}
-    user_prompts[user_id]['positive'] = new_prompt
-    await save_prompts(PROMPTS_FILE, user_prompts)
-    await interaction.response.send_message(f"**{interaction.user.display_name}** 的正向提示詞已更新為：\n```{new_prompt}```", ephemeral=True)
-
-@bot.tree.command(name="negative", description="設定你的負向提示詞")
-@app_commands.describe(prompt="你的負向提示詞，例如: worst quality, ugly")
-async def set_negative(interaction: discord.Interaction, prompt: str):
-    user_id = interaction.user.id
-    if user_id not in user_prompts:
-        user_prompts[user_id] = {}
-    user_prompts[user_id]['negative'] = prompt
-    await save_prompts(PROMPTS_FILE, user_prompts)
-    await interaction.response.send_message(f"**{interaction.user.display_name}**的負向提示詞已設定為：\n```{prompt}```", ephemeral=True)
-
-@bot.tree.command(name="negativeadd", description="加入提示詞到負向提示詞。若未設定，則會添加到預設值中。")
-@app_commands.describe(prompt="你想新增的提示詞，例如: text, watermark,")
-async def negative_add(interaction: discord.Interaction, prompt: str):
-    user_id = interaction.user.id
-    current_prompt = user_prompts.get(user_id, {}).get('negative')
-    if current_prompt:
-        base_prompt = current_prompt
-    else:
-        base_prompt = DEFAULT_NEGATIVE_PROMPT
-    clean_base = base_prompt.strip()
-    clean_prompt = prompt.strip()
-    if clean_base and not clean_base.endswith(','):
-        new_prompt = f"{clean_base}, {clean_prompt}"
-    else:
-        new_prompt = f"{clean_base} {clean_prompt}"
-    if user_id not in user_prompts:
-        user_prompts[user_id] = {}
-    user_prompts[user_id]['negative'] = new_prompt
-    await save_prompts(PROMPTS_FILE, user_prompts)
-    await interaction.response.send_message(f"**{interaction.user.display_name}**的負向提示詞已更新為：\n```{new_prompt}```", ephemeral=True)
-
-@bot.tree.command(name="negativedelete", description="刪除輸入的特定負向提示詞。")
-@app_commands.describe(prompt="你想刪除的提示詞，例如: text, watermark")
-async def negative_delete(interaction: discord.Interaction, prompt: str):
-    user_id = interaction.user.id
-    current_prompt = user_prompts.get(user_id, {}).get('negative')
-    if current_prompt:
-        base_prompt = current_prompt
-    else:
-        base_prompt = DEFAULT_POSITIVE_PROMPT
-    prompts_to_delete = [p.strip() for p in prompt.split(',') if p.strip()]
-    current_prompts_list = [p.strip() for p in base_prompt.split(',') if p.strip()]
-    new_prompts_list = [p for p in current_prompts_list if p not in prompts_to_delete]
-    new_prompt = ", ".join(new_prompts_list)
-    if user_id not in user_prompts:
-        user_prompts[user_id] = {}
-    user_prompts[user_id]['negative'] = new_prompt
-    await save_prompts(PROMPTS_FILE, user_prompts)
-    await interaction.response.send_message(f"**{interaction.user.display_name}** 的負向提示詞已更新為：\n```{new_prompt}```", ephemeral=True)
-
-@bot.tree.command(name="checkpositive", description="檢查你目前設定的正向提示詞")
-async def check_positive(interaction: discord.Interaction):
-    user_id = interaction.user.id
-    if user_id in user_prompts and 'positive' in user_prompts[user_id]:
-        positive_prompt = user_prompts[user_id]['positive']
-        await interaction.response.send_message(f"**{interaction.user.display_name}**目前自訂的正向提示詞是：\n```{positive_prompt}```", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"**{interaction.user.display_name}**尚未使用 `/positive` 設定，將使用**預設**正向提示詞：\n```{DEFAULT_POSITIVE_PROMPT}```", ephemeral=True)
-
-@bot.tree.command(name="checknegative", description="檢查你目前設定的負向提示詞")
-async def check_negative(interaction: discord.Interaction):
-    user_id = interaction.user.id
-    if user_id in user_prompts and 'negative' in user_prompts[user_id]:
-        negative_prompt = user_prompts[user_id]['negative']
-        await interaction.response.send_message(f"**{interaction.user.display_name}**目前自訂的負向提示詞是：\n```{negative_prompt}```", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"**{interaction.user.display_name}**尚未使用 `/negative` 設定，將使用**預設**負向提示詞：\n```{DEFAULT_NEGATIVE_PROMPT}```", ephemeral=True)
-
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="txt2img", description="文生圖")
 @app_commands.describe(
@@ -564,38 +524,20 @@ async def comfy_help(interaction: discord.Interaction):
     
     # 提示詞設定
     help_embed.add_field(
-        name="**提示詞設定**",
-        value=(
-            "`/positive <提示詞>`\n"
-            "設定你的正向提示詞\n"
-            "範例：`/positive masterpiece, 1girl, smile`\n\n"
-            "`/positiveadd <提示詞>`\n"
-            "加入提示詞到正向提示詞。\n"
-            "範例：`/positiveadd masterpiece, 1girl, smile`\n\n"
-            "`/positivedelete <提示詞>`\n"
-            "刪除正向提示詞中的提示詞。\n"
-            "範例：`/positivedelete masterpiece, 1girl, smile`\n\n"
-            "`/negative <提示詞>`\n"
-            "設定你的負向提示詞\n"
-            "範例：`/negative bad quality, ugly`\n\n"
-            "`/negativeadd <提示詞>`\n"
-            "加入提示詞到負向提示詞。\n"
-            "範例：`/negativeadd bad quality, ugly`\n\n"
-            "`/negativedelete <提示詞>`\n"
-            "刪除負向提示詞中的提示詞。\n"
-            "範例：`/negativedelete bad quality, ugly`\n\n"
-        ),
-        inline=False
-    )
+    name="**提示詞設定**",
+    value=(
+        "`/editprompts`\n"
+        "編輯正向與負向提示詞。\n"
+    ),
+    inline=False
+)
     
     # 查看提示詞
     help_embed.add_field(
         name="**查看提示詞**",
         value=(
-            "`/checkpositive`\n"
-            "查看你目前的正向提示詞\n\n"
-            "`/checknegative`\n"
-            "查看你目前的負向提示詞\n\n"
+            "`/checkprompts`\n"
+            "查看你目前的提示詞，若無則顯示默認提示詞\n"
         ),
         inline=False
     )
