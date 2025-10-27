@@ -90,7 +90,7 @@ python bot.py
 *   `/editprompts` - **編輯提示詞**
     *   彈出一個視窗，可修改正向與負向提示詞並儲存。
 
-*   `/checkprompts` - **查看正向提示詞**
+*   `/checkprompts` - **查看提示詞**
     *   顯示目前設定的提示詞。
 
 *   `/queue` - **查看佇列**
