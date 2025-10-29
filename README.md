@@ -48,13 +48,13 @@
 
 ### 1. 克隆此專案
 ```bash
-git clone <your-repo-url>
-cd <your-repo-name>
+git clone https://github.com/th0usandw1nd/ComfyUI-Discord-helper
+cd ComfyUI-Discord-helper
 ```
 
-### 2. 安裝依賴:
+### 2. 安裝依賴
 ```bash
-python -m pip install -r requirements.txt
+uv sync
 ```
 
 ### 3. 設定環境變數:
@@ -70,9 +70,9 @@ python -m pip install -r requirements.txt
 
 ![pic](.meta/default_workflow_screenshot.png)
 
-### 5. 執行 Bot:
+### 5. 執行 Bot
 ```bash
-python bot.py
+uv run python bot.py
 ```
 
 ## Discord 指令
