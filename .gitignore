@@ -20,3 +20,7 @@ user_prompts.json
 .vscode/
 .idea/
 *.swp
+
+# --- UV specific ---
+uv.lock
+.python-version
