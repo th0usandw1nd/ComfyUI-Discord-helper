@@ -573,8 +573,12 @@ async def comfy_help(interaction: discord.Interaction):
 
 
 # --- 運行 Bot ---
-if __name__ == "__main__":
+def main():
+    """主入口函數"""
     if not DISCORD_TOKEN:
         print("錯誤：找不到 Discord Bot Token。請確保你的 .env 檔案中已設定 DISCORD_TOKEN。")
-    else:
-        bot.run(DISCORD_TOKEN)
+        return
+    bot.run(DISCORD_TOKEN)
+
+if __name__ == "__main__":
+    main()
