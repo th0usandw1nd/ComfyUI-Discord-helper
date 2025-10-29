@@ -207,13 +207,7 @@ async def execute_generation(request):
     mode = request.get('mode', 'txt2img')
     input_image = request.get('input_image')
     denoise = request.get('denoise', 0.75)
-    
-    
-    # 判斷是否使用預設值
-    user_settings = user_prompts.get(request['user_id'], {})
-    is_default_pos = "(預設)" if 'positive' not in user_settings else ""
-    is_default_neg = "(預設)" if 'negative' not in user_settings else ""
-    
+
     batch_info = f" (共 {batch_count} 張)" if batch_count > 1 else ""
     size_display = f"**尺寸**: {size}\n"
     mode_display = f"**模式**: {'圖生圖' if mode == 'img2img' else '文生圖'}\n"
@@ -222,19 +216,24 @@ async def execute_generation(request):
         f"{mode_display}"
         f"{size_display}"
         f"{denoise_display}"
-        f"**正向 {is_default_pos}**:\n```{positive}```\n"
-        f"**負向 {is_default_neg}**:\n```{negative}```"
     )
+
+    embed = discord.Embed(
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="", value=prompt_display, inline=False)
+    embed.add_field(name="正向提示詞", value=f"\n```{positive}```\n", inline=False)
+    embed.add_field(name="負向提示詞", value=f"\n```{negative}```\n", inline=False)
     
-    initial_text = f"⏳ 開始生成圖片{batch_info}...\n\n{prompt_display}"
-    message = await interaction.followup.send(initial_text)
+    initial_text = f"⏳ 開始生成圖片{batch_info}...\n\n"
+    message = await interaction.followup.send(initial_text, embed=embed)
     progress_state = {'current': 0, 'total': batch_count}
     
     stop_event = asyncio.Event()
     
     # 啟動背景動畫任務
     animation_task = asyncio.create_task(
-        update_status_message(message, prompt_display, stop_event, progress_state)
+        update_status_message(message, stop_event, progress_state)
     )
     
     generated_images = []
@@ -258,7 +257,7 @@ async def execute_generation(request):
             if error_message:
                 stop_event.set()
                 await animation_task
-                await message.edit(content=f"{interaction.user.mention} ❌ 生成失敗(第 {i+1}/{batch_count} 張):{error_message}\n\n{prompt_display}")
+                await message.edit(content=f"{interaction.user.mention} ❌ 生成失敗(第 {i+1}/{batch_count} 張):{error_message}\n\n")
                 return
             
             if image_bytes:
@@ -267,7 +266,7 @@ async def execute_generation(request):
             else:
                 stop_event.set()
                 await animation_task
-                await message.edit(content=f"{interaction.user.mention} ❌ 生成失敗(第 {i+1}/{batch_count} 張),無法從 ComfyUI 獲取圖片數據。\n\n{prompt_display}")
+                await message.edit(content=f"{interaction.user.mention} ❌ 生成失敗(第 {i+1}/{batch_count} 張),無法從 ComfyUI 獲取圖片數據。\n\n")
                 return
         
         stop_event.set()
@@ -280,7 +279,7 @@ async def execute_generation(request):
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 mode_prefix = 'img2img' if mode == 'img2img' else 'txt2img'
                 picture = discord.File(io.BytesIO(generated_images[0]), filename=f"{mode_prefix}_{interaction.user.id}_{timestamp}_{1}.png")
-                await message.edit(content=f"{user_mention} ✅ 圖片生成完畢!\n\n{prompt_display}", attachments=[picture])
+                await message.edit(content=f"{user_mention} ✅ 圖片生成完畢!\n\n", attachments=[picture])
             else:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 mode_prefix = 'img2img' if mode == 'img2img' else 'txt2img'
@@ -288,9 +287,9 @@ async def execute_generation(request):
                     discord.File(io.BytesIO(img), filename=f"{mode_prefix}_{interaction.user.id}_{timestamp}_{i+1}.png")
                     for i, img in enumerate(generated_images)
                 ]
-                await message.edit(content=f"{user_mention} ✅ 圖片生成完畢!(共 {len(generated_images)} 張)\n\n{prompt_display}", attachments=files)
+                await message.edit(content=f"{user_mention} ✅ 圖片生成完畢!(共 {len(generated_images)} 張)\n\n", attachments=files)
         else:
-            await message.edit(content=f"{interaction.user.mention} ❌ 生成失敗,沒有獲取到任何圖片。\n\n{prompt_display}")
+            await message.edit(content=f"{interaction.user.mention} ❌ 生成失敗,沒有獲取到任何圖片。\n\n")
     
     except Exception as e:
         stop_event.set()
@@ -298,12 +297,12 @@ async def execute_generation(request):
             await animation_task
         except:
             pass
-        await message.edit(content=f"{interaction.user.mention} ❌ 發生錯誤:{str(e)}\n\n{prompt_display}")
+        await message.edit(content=f"{interaction.user.mention} ❌ 發生錯誤:{str(e)}\n\n")
         raise
 
 
 
-async def update_status_message(message, prompt_text, stop_event, progress_state):
+async def update_status_message(message, stop_event, progress_state):
     """
     背景任務：定期更新訊息以顯示動畫效果（保留提示詞資訊）
     """
@@ -325,7 +324,7 @@ async def update_status_message(message, prompt_text, stop_event, progress_state
             elif total_count > 1:
                 progress_info = f" (共 {total_count} 張)"
 
-            status_text = f"{animation} 正在生成圖片{progress_info}，請稍候{dot}\n\n{prompt_text}"
+            status_text = f"{animation} 正在生成圖片{progress_info}，請稍候{dot}\n"
             await message.edit(content=status_text)
             counter += 1
             await asyncio.sleep(1.5)
