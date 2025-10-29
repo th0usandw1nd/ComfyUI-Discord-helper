@@ -72,7 +72,7 @@ uv sync
 
 ### 5. 執行 Bot
 ```bash
-uv run python bot.py
+uv run bot
 ```
 
 ## Discord 指令
